@@ -1,0 +1,62 @@
+# Prometheus configuration for monitoring dashboard
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Rules for alerting
+rule_files:
+  - "alert_rules.yml"
+
+# Alert manager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          # - alertmanager:9093
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Node exporter for system metrics
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 5s
+
+  # Monitoring application metrics
+  - job_name: 'monitoring-app'
+    static_configs:
+      - targets: ['monitoring-app:5000']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Blackbox exporter for monitoring the monitoring tool itself
+  - job_name: 'blackbox'
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+        - http://monitoring-app:5000
+        - http://monitoring-app:5000/api/services
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  # Add your custom application targets here
+  - job_name: 'custom-apps'
+    static_configs:
+      - targets:
+        # Example targets - replace with your actual services
+        # - 'web-server:8080'
+        # - 'api-gateway:3000'
+        # - 'database:5432'
+    scrape_interval: 30s
