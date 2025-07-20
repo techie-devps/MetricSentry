@@ -1,4 +1,6 @@
 import { metrics, services, alerts, type Metric, type Service, type Alert, type InsertMetric, type InsertService, type InsertAlert } from "@shared/schema";
+import { db } from "./db";
+import { eq, desc } from "drizzle-orm";
 
 export interface IStorage {
   // Metrics
@@ -18,168 +20,89 @@ export interface IStorage {
   resolveAlert(id: number): Promise<Alert | undefined>;
 }
 
-export class MemStorage implements IStorage {
-  private metrics: Map<number, Metric>;
-  private services: Map<number, Service>;
-  private alerts: Map<number, Alert>;
-  private currentMetricId: number;
-  private currentServiceId: number;
-  private currentAlertId: number;
-
-  constructor() {
-    this.metrics = new Map();
-    this.services = new Map();
-    this.alerts = new Map();
-    this.currentMetricId = 1;
-    this.currentServiceId = 1;
-    this.currentAlertId = 1;
-    
-    // Initialize with some default services
-    this.initializeDefaultData();
-  }
-
-  private initializeDefaultData() {
-    const defaultServices: InsertService[] = [
-      {
-        name: "Web Server",
-        endpoint: "http://web-server:9090/metrics",
-        status: "healthy",
-        responseTime: 142,
-        lastScraped: new Date(),
-        icon: "server",
-      },
-      {
-        name: "Database",
-        endpoint: "http://database:9187/metrics",
-        status: "healthy",
-        responseTime: 89,
-        lastScraped: new Date(),
-        icon: "database",
-      },
-      {
-        name: "API Gateway",
-        endpoint: "http://api-gateway:8080/metrics",
-        status: "down",
-        responseTime: null,
-        lastScraped: new Date(Date.now() - 30000),
-        icon: "cloud",
-      },
-    ];
-
-    defaultServices.forEach(service => this.createService(service));
-
-    const defaultAlerts: InsertAlert[] = [
-      {
-        title: "API Gateway Down",
-        description: "Service has been unreachable for 30 seconds",
-        severity: "critical",
-        timestamp: new Date(Date.now() - 120000),
-        serviceName: "API Gateway",
-      },
-      {
-        title: "High Memory Usage",
-        description: "Memory usage exceeded 80% threshold",
-        severity: "warning",
-        timestamp: new Date(Date.now() - 300000),
-        serviceName: "Web Server",
-      },
-      {
-        title: "Slow Response Time",
-        description: "Average response time > 500ms",
-        severity: "warning",
-        timestamp: new Date(Date.now() - 720000),
-        serviceName: "Database",
-      },
-    ];
-
-    defaultAlerts.forEach(alert => this.createAlert(alert));
-  }
-
-  // Metrics
+export class DatabaseStorage implements IStorage {
   async getRecentMetrics(name: string, limit: number = 50): Promise<Metric[]> {
-    const filteredMetrics = Array.from(this.metrics.values())
-      .filter(metric => metric.name === name)
-      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
-      .slice(0, limit);
-    
-    return filteredMetrics;
+    const result = await db
+      .select()
+      .from(metrics)
+      .where(eq(metrics.name, name))
+      .orderBy(desc(metrics.timestamp))
+      .limit(limit);
+    return result;
   }
 
   async insertMetric(insertMetric: InsertMetric): Promise<Metric> {
-    const id = this.currentMetricId++;
-    const metric: Metric = { 
-      ...insertMetric, 
-      id,
-      labels: insertMetric.labels || null
-    };
-    this.metrics.set(id, metric);
+    const [metric] = await db
+      .insert(metrics)
+      .values(insertMetric)
+      .returning();
     return metric;
   }
 
-  // Services
   async getAllServices(): Promise<Service[]> {
-    return Array.from(this.services.values());
+    const result = await db.select().from(services);
+    return result;
   }
 
   async getService(id: number): Promise<Service | undefined> {
-    return this.services.get(id);
+    const [service] = await db
+      .select()
+      .from(services)
+      .where(eq(services.id, id));
+    return service || undefined;
   }
 
   async createService(insertService: InsertService): Promise<Service> {
-    const id = this.currentServiceId++;
-    const service: Service = { 
-      ...insertService, 
-      id,
-      responseTime: insertService.responseTime ?? null,
-      lastScraped: insertService.lastScraped ?? null,
-      icon: insertService.icon || "server"
-    };
-    this.services.set(id, service);
+    const [service] = await db
+      .insert(services)
+      .values(insertService)
+      .returning();
     return service;
   }
 
   async updateService(id: number, updates: Partial<Service>): Promise<Service | undefined> {
-    const service = this.services.get(id);
-    if (!service) return undefined;
-    
-    const updatedService = { ...service, ...updates };
-    this.services.set(id, updatedService);
-    return updatedService;
+    const [service] = await db
+      .update(services)
+      .set(updates)
+      .where(eq(services.id, id))
+      .returning();
+    return service || undefined;
   }
 
-  // Alerts
   async getRecentAlerts(limit: number = 10): Promise<Alert[]> {
-    return Array.from(this.alerts.values())
-      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
-      .slice(0, limit);
+    const result = await db
+      .select()
+      .from(alerts)
+      .orderBy(desc(alerts.timestamp))
+      .limit(limit);
+    return result;
   }
 
   async getUnresolvedAlerts(): Promise<Alert[]> {
-    return Array.from(this.alerts.values())
-      .filter(alert => !alert.resolved)
-      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+    const result = await db
+      .select()
+      .from(alerts)
+      .where(eq(alerts.resolved, false))
+      .orderBy(desc(alerts.timestamp));
+    return result;
   }
 
   async createAlert(insertAlert: InsertAlert): Promise<Alert> {
-    const id = this.currentAlertId++;
-    const alert: Alert = { 
-      ...insertAlert, 
-      id,
-      resolved: insertAlert.resolved ?? false,
-      serviceName: insertAlert.serviceName ?? null
-    };
-    this.alerts.set(id, alert);
+    const [alert] = await db
+      .insert(alerts)
+      .values(insertAlert)
+      .returning();
     return alert;
   }
 
   async resolveAlert(id: number): Promise<Alert | undefined> {
-    const alert = this.alerts.get(id);
-    if (!alert) return undefined;
-    
-    const resolvedAlert = { ...alert, resolved: true };
-    this.alerts.set(id, resolvedAlert);
-    return resolvedAlert;
+    const [alert] = await db
+      .update(alerts)
+      .set({ resolved: true })
+      .where(eq(alerts.id, id))
+      .returning();
+    return alert || undefined;
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new DatabaseStorage();
